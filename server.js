@@ -115,6 +115,17 @@ function isAdmin(req) {
   return verify(req.cookies && req.cookies.f404_admin) === 'admin';
 }
 
+// CSRF token helpers (double-submit cookie pattern)
+function generateCsrfToken() {
+  return crypto.randomBytes(24).toString('hex');
+}
+
+function validateCsrf(req) {
+  const cookieToken = req.cookies && req.cookies.f404_csrf;
+  const headerToken = req.headers['x-csrf-token'];
+  return cookieToken && headerToken && cookieToken === headerToken;
+}
+
 function computeUnlocked(state) {
   if (!state.startedAt) return [];
   const now = Date.now();
@@ -143,14 +154,17 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.post('/api/admin/login', (req, res) => {
   const { username, password } = req.body || {};
   if (username === ADMIN_USER && password === ADMIN_PASS) {
+    const csrfToken = generateCsrfToken();
     res.cookie('f404_admin', sign('admin'), { httpOnly: true, sameSite: 'strict' });
-    return res.json({ ok: true });
+    res.cookie('f404_csrf', csrfToken, { httpOnly: false, sameSite: 'strict' });
+    return res.json({ ok: true, csrfToken });
   }
   res.status(401).json({ error: 'Invalid credentials' });
 });
 
 app.post('/api/admin/logout', (req, res) => {
   res.clearCookie('f404_admin');
+  res.clearCookie('f404_csrf');
   res.json({ ok: true });
 });
 
@@ -181,6 +195,10 @@ app.get('/api/state', async (req, res) => {
 
 function adminOnly(req, res, next) {
   if (!isAdmin(req)) return res.status(403).json({ error: 'Forbidden' });
+  // Require CSRF token for state-changing (non-GET) requests
+  if (req.method !== 'GET' && !validateCsrf(req)) {
+    return res.status(403).json({ error: 'CSRF token invalid' });
+  }
   next();
 }
 

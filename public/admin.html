@@ -324,6 +324,13 @@
   <script>
     let startedAt = null;
     let clockOffset = 0;
+    let csrfToken = null;
+
+    // Read CSRF token from cookie
+    function readCsrfCookie() {
+      const m = document.cookie.match(/(?:^|;\s*)f404_csrf=([^;]+)/);
+      return m ? m[1] : null;
+    }
 
     // ─ Auth ──────────────────────────────────────────────────────────────────
     async function doLogin() {
@@ -337,8 +344,11 @@
           body: JSON.stringify({ username: usr, password: pwd }),
           credentials: 'same-origin',
         });
-        if (res.ok) { showPanel(); }
-        else { err.textContent = 'Invalid credentials'; }
+        if (res.ok) {
+          const d = await res.json();
+          csrfToken = d.csrfToken || readCsrfCookie();
+          showPanel();
+        } else { err.textContent = 'Invalid credentials'; }
       } catch (e) { err.textContent = e.message; }
     }
 
@@ -347,14 +357,15 @@
     });
 
     async function doLogout() {
-      await fetch('/api/admin/logout', { method: 'POST', credentials: 'same-origin' });
+      await fetch('/api/admin/logout', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken || '' } });
       location.reload();
     }
 
     async function checkAuth() {
       const res = await fetch('/api/admin/me', { credentials: 'same-origin' });
       const d = await res.json();
-      if (d.admin) showPanel();
+      if (d.admin) { csrfToken = readCsrfCookie(); showPanel(); }
     }
 
     function showPanel() {
@@ -401,7 +412,10 @@
 
     async function refreshSubmissions() {
       try {
-        const res = await fetch('/api/admin/submissions', { credentials: 'same-origin' });
+        const res = await fetch('/api/admin/submissions', {
+          credentials: 'same-origin',
+          headers: { 'X-CSRF-Token': csrfToken || '' },
+        });
         if (!res.ok) return;
         const subs = await res.json();
         document.getElementById('sub-count').textContent = subs.length;
@@ -423,7 +437,8 @@
 
     // ─ Actions ────────────────────────────────────────────────────────────────
     async function api(url, opts = {}) {
-      const res = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, ...opts });
+      const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken || '', ...opts.headers };
+      const res = await fetch(url, { method: 'POST', credentials: 'same-origin', ...opts, headers });
       if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Error'); }
       return res.json();
     }
